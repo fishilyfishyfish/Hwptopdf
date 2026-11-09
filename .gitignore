@@ -1,0 +1,11 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+
+# Downloaded at build time by tools/fetch-assets.sh
+app/src/main/assets/rhwp.js
+app/src/main/assets/rhwp_bg.wasm
+app/src/main/assets/fonts/
+app/src/main/assets/licenses/

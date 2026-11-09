@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HWP → PDF</string>
+    <string name="open_label">PDF로 변환</string>
+    <string name="widget_description">눌러서 HWP 파일을 PDF로 변환</string>
+    <string name="widget_hint">눌러서 파일 고르기</string>
+    <string name="widget_last">최근: %1$s</string>
+
+    <string name="choose_prompt">HWP나 HWPX 파일을 골라 주세요.</string>
+    <string name="choose_file">파일 고르기</string>
+    <string name="high_quality">고화질 (파일이 커져요)</string>
+    <string name="open">열기</string>
+    <string name="share">공유</string>
+    <string name="footer">파일은 이 기기 안에서만 처리돼요. PDF는 다운로드/HWP2PDF에 저장돼요.\n\n변환 엔진 rhwp (MIT), 글꼴 Noto·Pretendard (OFL), Latin Modern Math (GUST).</string>
+
+    <string name="reading_file">파일 읽는 중…</string>
+    <string name="loading_engine">변환 엔진 준비 중…</string>
+    <string name="opening_document">문서 여는 중…</string>
+    <string name="converting">변환 중… %1$d / %2$d쪽</string>
+    <string name="saved">저장했어요: %1$s</string>
+    <string name="failed">변환 실패: %1$s</string>
+
+    <string name="no_file_received">파일을 받지 못했어요.</string>
+    <string name="already_converting">이미 변환 중이에요.</string>
+    <string name="read_failed">파일을 읽지 못했어요.</string>
+    <string name="write_failed">PDF를 저장하지 못했어요.</string>
+    <string name="out_of_memory">메모리가 부족해요. 고화질을 끄고 다시 해 보세요.</string>
+    <string name="no_recent">아직 변환한 파일이 없어요.</string>
+    <string name="cannot_open">PDF를 열 앱이 없거나 파일이 옮겨졌어요.</string>
+</resources>
