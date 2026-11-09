@@ -1,6 +1,7 @@
 import init, { HwpDocument } from './rhwp.js';
 
 const PX_TO_PT = 0.75;
+const HWPUNIT_PER_PX = 75;
 // Where a line's baseline sits inside the box the layout reports.
 const BASELINE_RATIO = 0.85;
 // A canvas this size is safe on tablets and still gives A3 about 260 dpi.
@@ -146,11 +147,12 @@ CanvasRenderingContext2D.prototype.fillText = function (text, x, y, ...rest) {
     const isMark = text === DOUBLE_TONE_DRAWN_AS || TONE_MARK.test(text);
     drawX = x + toneShift(isMark, m.e + x * m.a, m.f + y * m.d) / m.a;
   }
+  const drawY = y + shiftAt(this, x, y);
   if (text === DOUBLE_TONE_DRAWN_AS) {
-    drawDoubleTone(this, drawX, y);
+    drawDoubleTone(this, drawX, drawY);
     return;
   }
-  nativeFillText.call(this, text, drawX, y, ...rest);
+  nativeFillText.call(this, text, drawX, drawY, ...rest);
 };
 
 // Android fonts have no glyph for U+205A, so draw it the way the engine draws a
@@ -174,16 +176,135 @@ CanvasRenderingContext2D.prototype.arc = function (x, y, ...rest) {
     const m = this.getTransform();
     drawX = x + toneShift(true, m.e + x * m.a, m.f + y * m.d) / m.a;
   }
-  nativeArc.call(this, drawX, y, ...rest);
+  nativeArc.call(this, drawX, y + shiftAt(this, x, y), ...rest);
 };
+
+// Exam papers often open with a full-width title table anchored to the first
+// paragraph. Hancom reserves its band once, for every column. The engine reserves
+// it, draws the table below the band, then pushes the anchor's column down again,
+// so the table lands on the next column's text. These shifts undo that.
+let bands = [];
+let bandScale = 1;
+let pathShift = 0;
+
+function bandShiftInPage(x, y) {
+  for (const band of bands) {
+    if (x >= band.left && x <= band.right && y >= band.top && y <= band.bottom
+        && (!band.accepts || band.accepts(x, y))) {
+      return band.shift;
+    }
+  }
+  return 0;
+}
+
+/** The vertical correction, in the context's own units, for something drawn at (x, y). */
+function shiftAt(context, x, y) {
+  if (!bands.length) return 0;
+  const m = context.getTransform();
+  return (bandShiftInPage((m.e + x * m.a) / bandScale, (m.f + y * m.d) / bandScale) * bandScale) / m.d;
+}
+
+const canvasApi = CanvasRenderingContext2D.prototype;
+
+for (const name of ['fillRect', 'strokeRect', 'clearRect', 'rect', 'ellipse']) {
+  const native = canvasApi[name];
+  canvasApi[name] = function (x, y, ...rest) {
+    native.call(this, x, y + shiftAt(this, x, y), ...rest);
+  };
+}
+
+const nativeStrokeText = canvasApi.strokeText;
+canvasApi.strokeText = function (text, x, y, ...rest) {
+  nativeStrokeText.call(this, text, x, y + shiftAt(this, x, y), ...rest);
+};
+
+// A path moves as one piece, decided by where it starts.
+const nativeMoveTo = canvasApi.moveTo;
+canvasApi.moveTo = function (x, y) {
+  pathShift = shiftAt(this, x, y);
+  nativeMoveTo.call(this, x, y + pathShift);
+};
+
+const nativeLineTo = canvasApi.lineTo;
+canvasApi.lineTo = function (x, y) {
+  nativeLineTo.call(this, x, y + pathShift);
+};
+
+const nativeQuadratic = canvasApi.quadraticCurveTo;
+canvasApi.quadraticCurveTo = function (cx, cy, x, y) {
+  nativeQuadratic.call(this, cx, cy + pathShift, x, y + pathShift);
+};
+
+const nativeBezier = canvasApi.bezierCurveTo;
+canvasApi.bezierCurveTo = function (ax, ay, bx, by, x, y) {
+  nativeBezier.call(this, ax, ay + pathShift, bx, by + pathShift, x, y + pathShift);
+};
+
+const nativeDrawImage = canvasApi.drawImage;
+canvasApi.drawImage = function (image, ...args) {
+  // The destination position comes first, unless a source rectangle precedes it.
+  const yIndex = args.length === 8 ? 5 : 1;
+  args[yIndex] += shiftAt(this, args[yIndex - 1], args[yIndex]);
+  nativeDrawImage.call(this, image, ...args);
+};
+
+function findHeaderBands(doc, pageIndex, info, layoutJson) {
+  if (info.columns.length < 2) return [];
+  const { controls = [] } = JSON.parse(doc.getPageControlLayout(pageIndex));
+  const { runs = [] } = JSON.parse(layoutJson);
+  const bodyTop = info.marginTop + info.marginHeader;
+  const bodyWidth = info.bodyRight - info.bodyLeft;
+  const found = [];
+
+  for (const table of controls) {
+    if (table.type !== 'table' || table.wrap !== 'topAndBottom' || table.w < bodyWidth * 0.8) continue;
+    const props = JSON.parse(doc.getTableProperties(table.secIdx, table.paraIdx, table.controlIdx));
+    if (props.treatAsChar || props.vertRelTo !== 'Para') continue;
+
+    const body = runs.filter((run) => !run.cellPath && run.secIdx === table.secIdx);
+    const anchor = body.find((run) => run.paraIdx === table.paraIdx);
+    if (!anchor) continue;
+    const pushed = anchor.y - bodyTop;
+    if (pushed < 2 || Math.abs(table.y - anchor.y) > 3) continue;
+
+    const column = info.columns.find((c) => anchor.x >= c.x - 2 && anchor.x <= c.x + c.width);
+    if (!column) continue;
+    const inColumn = (run) => run.x >= column.x - 2 && run.x <= column.x + column.width + 2;
+    if (body.some((run) => inColumn(run) && run.text.trim() && run.y < anchor.y - 1)) continue;
+
+    const cellRuns = runs.filter((run) => run.cellPath && run.parentParaIdx === table.paraIdx
+      && run.controlIdx === table.controlIdx);
+    const cellEdges = table.cells.flatMap((cell) => [cell.x, cell.x + cell.w]);
+    const nextColumnX = info.columns.find((c) => c.x > column.x)?.x ?? Infinity;
+    const correctY = bodyTop + (props.vertOffset + props.outerTop) / HWPUNIT_PER_PX;
+
+    found.push({
+      left: table.x - 2, right: table.x + table.w + 2, top: table.y - 2, bottom: table.y + table.h + 2,
+      shift: correctY - table.y,
+      // The band overlaps the next column, whose own text must stay where it is.
+      accepts: (x, y) => x < nextColumnX
+        || cellEdges.some((edge) => Math.abs(x - edge) < 1.5)
+        || cellRuns.some((run) => x >= run.x - 1 && x <= run.x + run.w + 1 && y >= run.y - 2 && y <= run.y + run.h + 2),
+    });
+
+    const next = body.find((run) => run.paraIdx === table.paraIdx + 1 && inColumn(run));
+    if (next && next.y - anchor.y > pushed) {
+      found.push({
+        left: column.x - 2, right: column.x + column.width + 2, top: next.y - 2, bottom: info.height, shift: -pushed,
+      });
+    }
+  }
+  return found;
+}
 
 /** One TJ array per text run, placed to match the rendered page image. */
 function invisibleText(layoutJson, pageHeightPx) {
   const { runs = [] } = JSON.parse(layoutJson);
   const ops = [];
   for (const run of runs) {
-    const chars = Array.from(run.text ?? '');
-    const edges = run.charX ?? [];
+    // Old Hangul in private-use codes has a real-Unicode form for display.
+    const chars = Array.from(run.displayText ?? run.text ?? '');
+    const edges = run.displayCharX ?? run.charX ?? [];
     const size = run.fontSize * PX_TO_PT;
     if (!chars.length || edges.length !== chars.length + 1 || !(size > 0)) continue;
     if (!chars.some((c) => c.trim())) continue;
@@ -204,7 +325,8 @@ function invisibleText(layoutJson, pageHeightPx) {
     });
     if (!parts.length) continue;
 
-    const baseline = pageHeightPx - (run.y + run.h * BASELINE_RATIO);
+    const top = run.y + bandShiftInPage(run.x, run.y + run.h / 2);
+    const baseline = pageHeightPx - (top + run.h * BASELINE_RATIO);
     ops.push(
       `BT 3 Tr /F1 ${size.toFixed(2)} Tf 1 0 0 1 ${(run.x * PX_TO_PT).toFixed(2)} ` +
       `${(baseline * PX_TO_PT).toFixed(2)} Tm [${parts.join('')}] TJ ET`,
@@ -233,9 +355,13 @@ window.convert = async (scale, quality) => {
       const pageScale = Math.min(scale, limit);
       const layout = doc.getPageTextLayout(i);
       toneMoves = findToneMoves(layout, pageScale);
+      bands = findHeaderBands(doc, i, info, layout);
+      bandScale = pageScale;
       doc.renderPageToCanvas(i, canvas, pageScale);
       toneMoves = [];
       const jpeg = canvas.toDataURL('image/jpeg', quality);
+      const textLayer = invisibleText(layout, info.height);
+      bands = [];
       bridge.page(
         i,
         jpeg.slice(jpeg.indexOf(',') + 1),
@@ -243,7 +369,7 @@ window.convert = async (scale, quality) => {
         canvas.height,
         info.width * PX_TO_PT,
         info.height * PX_TO_PT,
-        invisibleText(layout, info.height),
+        textLayer,
       );
       // Yield so the page's memory can be reclaimed between renders.
       await new Promise((resolve) => setTimeout(resolve));

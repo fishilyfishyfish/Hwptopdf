@@ -10,8 +10,8 @@ android {
         applicationId "io.github.fishy.hwptopdf"
         minSdk 29
         targetSdk 35
-        versionCode 2
-        versionName "1.1"
+        versionCode 3
+        versionName "1.2"
     }
 
     // One fixed key, so a newer APK installs over the old one.
