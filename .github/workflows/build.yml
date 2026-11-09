@@ -44,7 +44,9 @@ jobs:
             gh release create latest --title "HWP → PDF" --notes "태블릿에서 hwptopdf.apk를 받아 설치하세요."
           gh release upload latest hwptopdf.apk --clobber
 
+  # Takes about ten minutes, so it only runs when started by hand.
   e2e:
+    if: github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 40

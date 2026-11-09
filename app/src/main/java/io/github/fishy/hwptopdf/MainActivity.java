@@ -58,6 +58,7 @@ public class MainActivity extends Activity {
     static final String EXTRA_PICK = "pick";
     static final String EXTRA_OPEN_LAST = "open_last";
     private static final String EXTRA_E2E_PATH = "e2e_path";
+    private static final String EXTRA_E2E_SAVE = "e2e_save";
 
     private static final String TAG = "HwpToPdf";
     private static final int REQUEST_PICK = 1;
@@ -143,7 +144,7 @@ public class MainActivity extends Activity {
         String e2ePath = intent.getStringExtra(EXTRA_E2E_PATH);
         boolean debuggable = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
         if (e2ePath != null && debuggable) {
-            startE2e(e2ePath);
+            startE2e(e2ePath, intent.getBooleanExtra(EXTRA_E2E_SAVE, false));
             return;
         }
         String action = intent.getAction();
@@ -195,11 +196,11 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void startE2e(String relativePath) {
+    private void startE2e(String relativePath, boolean saveToDownloads) {
         e2eRun = true;
         setBusy(true);
         outputName = "e2e.pdf";
-        e2eOutput = new File(getCacheDir(), "e2e.pdf");
+        e2eOutput = saveToDownloads ? null : new File(getCacheDir(), "e2e.pdf");
         io.execute(() -> {
             try (InputStream in = new FileInputStream(new File(getCacheDir(), relativePath));
                  OutputStream out = new FileOutputStream(inputFile)) {
