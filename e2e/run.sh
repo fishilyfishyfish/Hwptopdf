@@ -61,7 +61,8 @@ case "$saved" in
   *) echo "The PDF did not reach Downloads"; status=1 ;;
 esac
 
-widget=$(adb shell dumpsys appwidget | grep -c "$PKG/.ConvertWidget")
+adb shell dumpsys appwidget | grep "ConvertWidget" | head -3 | cut -c1-200
+widget=$(adb shell dumpsys appwidget | grep -c "$PKG.ConvertWidget")
 echo "Widget provider entries: $widget"
 [ "$widget" -gt 0 ] || status=1
 
