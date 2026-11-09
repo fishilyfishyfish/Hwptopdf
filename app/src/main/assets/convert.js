@@ -106,6 +106,8 @@ window.convert = async (scale, quality) => {
     bridge.begin(pageCount);
 
     const canvas = document.createElement('canvas');
+    // Every page is read straight back, so keep it out of GPU memory.
+    canvas.getContext('2d', { willReadFrequently: true });
     for (let i = 0; i < pageCount; i++) {
       const info = JSON.parse(doc.getPageInfo(i));
       const limit = Math.sqrt(MAX_PIXELS / (info.width * info.height));
