@@ -20,11 +20,13 @@ cp "$WORK/package/LICENSE" "$ASSETS/licenses/rhwp-MIT.txt"
 cp "$WORK/package/notices/THIRD_PARTY_LICENSES.md" "$ASSETS/licenses/rhwp-third-party.md"
 
 for font in NotoSerifKR-Regular NotoSerifKR-Bold NotoSansKR-Regular NotoSansKR-Bold \
-            Pretendard-Regular Pretendard-Bold LatinModernMath-Regular; do
+            Pretendard-Regular Pretendard-Bold LatinModernMath-Regular \
+            RHWPOldHangul-Regular RHWPPublicBatang-Regular; do
   curl -fsSL --retry 3 -o "$ASSETS/fonts/$font.woff2" "$RAW/$font.woff2"
 done
 
-for licence in NotoCJKSerif-OFL.txt NotoSansKR-OFL.txt Pretendard-OFL.txt LatinModernMath-GUST-FONT-LICENSE.txt; do
+for licence in NotoCJKSerif-OFL.txt NotoSansKR-OFL.txt Pretendard-OFL.txt LatinModernMath-GUST-FONT-LICENSE.txt \
+               SourceHanSerifK-OFL.txt RHWPPublicBatang-OFL.txt; do
   curl -fsSL --retry 3 -o "$ASSETS/licenses/$licence" "$RAW/licenses/$licence"
 done
 

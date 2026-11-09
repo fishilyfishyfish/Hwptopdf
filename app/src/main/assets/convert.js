@@ -10,6 +10,7 @@ const FACES = [
   "400 16px 'Noto Sans KR'", "700 16px 'Noto Sans KR'",
   "400 16px 'Pretendard'", "700 16px 'Pretendard'",
   "400 16px 'Latin Modern Math'",
+  "400 16px 'RHWP Old Hangul'",
 ];
 
 const bridge = window.Android;
@@ -48,14 +49,132 @@ function equationChar(char) {
   return EQUATION_SYMBOLS[code] ?? char;
 }
 
+// A tone mark (방점) is stored after its syllable and belongs on the syllable's
+// left, but the engine paints it in storage order. On the right it reads as the
+// next syllable's mark, so the pair is swapped inside the space it already has.
+const TONE_MARK = /^[〮〯]+$/;
+const HANGUL = /[가-힣ᄀ-ᇿꥠ-ꥼힰ-ퟻ]/;
+const DOUBLE_TONE_DRAWN_AS = '⁚'; // the engine's stand-in for a double dot
+const graphemes = new Intl.Segmenter('ko', { granularity: 'grapheme' });
+let toneMoves = [];
+
+function clustersOf(run) {
+  const clusters = [];
+  let index = 0;
+  for (const { segment } of graphemes.segment(run.text ?? '')) {
+    const length = Array.from(segment).length;
+    const start = run.charX?.[index];
+    const end = run.charX?.[index + length];
+    index += length;
+    if (start === undefined || end === undefined) continue;
+    clusters.push({
+      text: segment, x: run.x + start, width: end - start, top: run.y, bottom: run.y + run.h,
+    });
+  }
+  return clusters;
+}
+
+const isNextTo = (a, b) => b.top < a.bottom && a.top < b.bottom && Math.abs(a.x + a.width - b.x) < 2;
+
+function findToneMoves(layoutJson, scale) {
+  const { runs = [] } = JSON.parse(layoutJson);
+  if (!runs.some((run) => /[〮〯]/.test(run.text ?? ''))) return [];
+
+  const paragraphs = new Map();
+  for (const run of runs) {
+    const key = `${run.secIdx}:${run.paraIdx}`;
+    paragraphs.set(key, [...(paragraphs.get(key) ?? []), ...clustersOf(run)]);
+  }
+
+  const moves = [];
+  for (const clusters of paragraphs.values()) {
+    const pairs = [];
+    let leadingMarks = 0;
+    let trailingMarks = 0;
+    clusters.forEach((cluster, i) => {
+      if (!TONE_MARK.test(cluster.text)) return;
+      const previous = clusters[i - 1];
+      const next = clusters[i + 1];
+      if (previous && HANGUL.test(previous.text) && isNextTo(previous, cluster)) {
+        pairs.push([previous, cluster]);
+      } else {
+        leadingMarks++;
+      }
+      if (!next || !HANGUL.test(next.text) || !isNextTo(cluster, next)) trailingMarks++;
+    });
+    // Marks that open words were typed in front of their syllables already.
+    if (leadingMarks > trailingMarks) continue;
+
+    for (const [syllable, mark] of pairs) {
+      const top = Math.min(syllable.top, mark.top) * scale;
+      const bottom = Math.max(syllable.bottom, mark.bottom) * scale;
+      moves.push({
+        isMark: false, left: (syllable.x - 1.5) * scale, right: (syllable.x + 1.5) * scale,
+        top, bottom, shift: mark.width * scale,
+      });
+      moves.push({
+        isMark: true, left: (mark.x - 1.5) * scale, right: (mark.x + mark.width + 1.5) * scale,
+        top, bottom, shift: (syllable.x - mark.x) * scale,
+      });
+    }
+  }
+  return moves;
+}
+
+function toneShift(isMark, x, y) {
+  for (const move of toneMoves) {
+    if (move.isMark === isMark && x >= move.left && x <= move.right && y >= move.top && y <= move.bottom) {
+      return move.shift;
+    }
+  }
+  return 0;
+}
+
 const EQUATION_FONT = /"?(?:HyhwpEQ|HancomEQN|RHWP Hancom Legacy Equation)"?/i;
 const nativeFillText = CanvasRenderingContext2D.prototype.fillText;
-CanvasRenderingContext2D.prototype.fillText = function (text, ...rest) {
+CanvasRenderingContext2D.prototype.fillText = function (text, x, y, ...rest) {
   const font = this.font;
-  if (!EQUATION_FONT.test(font)) return nativeFillText.call(this, text, ...rest);
-  this.font = font.replace(EQUATION_FONT, "'Latin Modern Math', serif");
-  nativeFillText.call(this, Array.from(text, equationChar).join(''), ...rest);
-  this.font = font;
+  if (EQUATION_FONT.test(font)) {
+    this.font = font.replace(EQUATION_FONT, "'Latin Modern Math', serif");
+    nativeFillText.call(this, Array.from(text, equationChar).join(''), x, y, ...rest);
+    this.font = font;
+    return;
+  }
+  let drawX = x;
+  if (toneMoves.length) {
+    const m = this.getTransform();
+    const isMark = text === DOUBLE_TONE_DRAWN_AS || TONE_MARK.test(text);
+    drawX = x + toneShift(isMark, m.e + x * m.a, m.f + y * m.d) / m.a;
+  }
+  if (text === DOUBLE_TONE_DRAWN_AS) {
+    drawDoubleTone(this, drawX, y);
+    return;
+  }
+  nativeFillText.call(this, text, drawX, y, ...rest);
+};
+
+// Android fonts have no glyph for U+205A, so draw it the way the engine draws a
+// single dot: as circles, sized and placed relative to the font.
+function drawDoubleTone(context, x, baseline) {
+  const size = parseFloat(context.font.match(/([\d.]+)px/)?.[1] ?? '16');
+  const centerX = x + size * 0.12;
+  const centerY = baseline - size * 0.345;
+  for (const offset of [-0.16, 0.16]) {
+    context.beginPath();
+    nativeArc.call(context, centerX, centerY + size * offset, size * 0.06, 0, Math.PI * 2);
+    context.fill();
+  }
+}
+
+// The engine draws a single tone mark as a small filled circle.
+const nativeArc = CanvasRenderingContext2D.prototype.arc;
+CanvasRenderingContext2D.prototype.arc = function (x, y, ...rest) {
+  let drawX = x;
+  if (toneMoves.length) {
+    const m = this.getTransform();
+    drawX = x + toneShift(true, m.e + x * m.a, m.f + y * m.d) / m.a;
+  }
+  nativeArc.call(this, drawX, y, ...rest);
 };
 
 /** One TJ array per text run, placed to match the rendered page image. */
@@ -111,7 +230,11 @@ window.convert = async (scale, quality) => {
     for (let i = 0; i < pageCount; i++) {
       const info = JSON.parse(doc.getPageInfo(i));
       const limit = Math.sqrt(MAX_PIXELS / (info.width * info.height));
-      doc.renderPageToCanvas(i, canvas, Math.min(scale, limit));
+      const pageScale = Math.min(scale, limit);
+      const layout = doc.getPageTextLayout(i);
+      toneMoves = findToneMoves(layout, pageScale);
+      doc.renderPageToCanvas(i, canvas, pageScale);
+      toneMoves = [];
       const jpeg = canvas.toDataURL('image/jpeg', quality);
       bridge.page(
         i,
@@ -120,7 +243,7 @@ window.convert = async (scale, quality) => {
         canvas.height,
         info.width * PX_TO_PT,
         info.height * PX_TO_PT,
-        invisibleText(doc.getPageTextLayout(i), info.height),
+        invisibleText(layout, info.height),
       );
       // Yield so the page's memory can be reclaimed between renders.
       await new Promise((resolve) => setTimeout(resolve));
@@ -144,7 +267,7 @@ function friendly(message) {
 }
 
 try {
-  await Promise.all(FACES.map((face) => document.fonts.load(face, '가Aa1')));
+  await Promise.all(FACES.map((face) => document.fonts.load(face, '가Aa1\u1112\u119e\u4e2d')));
   await init({ module_or_path: 'rhwp_bg.wasm' });
   bridge.ready();
 } catch (error) {
