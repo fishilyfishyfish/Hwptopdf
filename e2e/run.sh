@@ -52,6 +52,8 @@ status=0
 convert_one samples/exam_math.hwp hwp || status=1
 convert_one samples/sample.hwpx hwpx || status=1
 convert_one e2e/oldhangul.hwp oldhangul || status=1
+pdftoppm -r 150 -f 1 -l 1 -x 100 -y 130 -W 1100 -H 420 -jpeg "$OUT/oldhangul.pdf" "$OUT/oh"
+python3 -c "import base64,glob;print('IMAGE-BEGIN oh');print(base64.b64encode(open(glob.glob('$OUT/oh*.jpg')[0],'rb').read()).decode());print('IMAGE-END')"
 
 run_app samples/exam_math.hwp downloads --ez e2e_save true
 saved=$(adb shell content query --uri content://media/external/downloads \
