@@ -248,6 +248,16 @@ canvasApi.drawImage = function (image, ...args) {
   nativeDrawImage.call(this, image, ...args);
 };
 
+// The layout can list a table the property lookup cannot address, such as one
+// nested inside another object. Those are simply not candidates for a correction.
+function tableProperties(doc, table) {
+  try {
+    return JSON.parse(doc.getTableProperties(table.secIdx, table.paraIdx, table.controlIdx));
+  } catch {
+    return null;
+  }
+}
+
 function findHeaderBands(doc, pageIndex, info, layoutJson) {
   if (info.columns.length < 2) return [];
   const { controls = [] } = JSON.parse(doc.getPageControlLayout(pageIndex));
@@ -258,8 +268,8 @@ function findHeaderBands(doc, pageIndex, info, layoutJson) {
 
   for (const table of controls) {
     if (table.type !== 'table' || table.wrap !== 'topAndBottom' || table.w < bodyWidth * 0.8) continue;
-    const props = JSON.parse(doc.getTableProperties(table.secIdx, table.paraIdx, table.controlIdx));
-    if (props.treatAsChar || props.vertRelTo !== 'Para') continue;
+    const props = tableProperties(doc, table);
+    if (!props || props.treatAsChar || props.vertRelTo !== 'Para') continue;
 
     const body = runs.filter((run) => !run.cellPath && run.secIdx === table.secIdx);
     const anchor = body.find((run) => run.paraIdx === table.paraIdx);
